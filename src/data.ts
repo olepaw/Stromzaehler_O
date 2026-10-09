@@ -2,7 +2,7 @@ import { bucketStart, nextBucket, type Range, type Granularity } from './time';
 export type Feed = { created_at: string; entry_id: number; [key: string]: string | number | null };
 export type Channel = { id: number; name: string; [key: string]: unknown };
 export type Settings = { channelId: string; importField: string; exportField: string; powerField: string; counterUnit: 'kWh' | 'Wh'; powerUnit: 'W' | 'kW'; tariff: number };
-export const defaultSettings: Settings = { channelId: '2184811', importField: 'field1', exportField: 'field2', powerField: 'field3', counterUnit: 'kWh', powerUnit: 'W', tariff: 0.32 };
+export const defaultSettings: Settings = { channelId: '2184811', importField: 'field1', exportField: 'field2', powerField: 'field3', counterUnit: 'kWh', powerUnit: 'W', tariff: 0.27 };
 export function numeric(value: unknown): number | null {
   if (value == null || typeof value !== 'string' && typeof value !== 'number' || typeof value === 'string' && value.trim() === '') return null;
   const n = Number(value);
@@ -17,10 +17,10 @@ export function normalizeFeeds(feeds: Feed[]): Feed[] {
   return [...unique.entries()].sort(([a], [b]) => a - b).map(([, f]) => f);
 }
 export type Bucket = { timestamp: number; importEnergy: number | null; exportEnergy: number | null; power: number | null; peak: number | null };
-export function analyze(feeds: Feed[], range: Range, granularity: Granularity, settings: Settings) {
+export function analyze(feeds: Feed[], range: Range, granularity: Granularity, settings: Settings, intervalHours = 6) {
   const sorted = normalizeFeeds(feeds);
   const rows = new Map<number, Bucket>();
-  for (let t = bucketStart(range.start, granularity); t < range.end; t = nextBucket(t, granularity)) {
+  for (let t = bucketStart(range.start, granularity, intervalHours); t < range.end; t = nextBucket(t, granularity, intervalHours)) {
     rows.set(t, { timestamp: t, importEnergy: null, exportEnergy: null, power: null, peak: null });
     if (rows.size > 10000) throw new Error('Bitte eine gröbere Auflösung wählen.');
   }
@@ -39,8 +39,8 @@ export function analyze(feeds: Feed[], range: Range, granularity: Granularity, s
       const rate = (b.v - a.v) * scale / (b.t - a.t);
       let cursor = left;
       while (cursor < right) {
-        const start = bucketStart(cursor, granularity);
-        const stop = Math.min(nextBucket(start, granularity), right);
+        const start = bucketStart(cursor, granularity, intervalHours);
+        const stop = Math.min(nextBucket(start, granularity, intervalHours), right);
         const row = rows.get(start);
         if (row) row[target] = (row[target] ?? 0) + rate * (stop - cursor);
         cursor = stop;
@@ -58,7 +58,7 @@ export function analyze(feeds: Feed[], range: Range, granularity: Granularity, s
     const value = numeric(feed[settings.powerField]);
     if (value === null) continue;
     const power = value * (settings.powerUnit === 'kW' ? 1000 : 1);
-    const bucket = bucketStart(Date.parse(feed.created_at), granularity);
+    const bucket = bucketStart(Date.parse(feed.created_at), granularity, intervalHours);
     const aggregate = powers.get(bucket) ?? { sum: 0, count: 0, peak: -Infinity };
     aggregate.sum += power;
     aggregate.count++;

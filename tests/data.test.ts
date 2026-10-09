@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { analyze, defaultSettings, loadFeeds, numeric, type Feed } from '../src/data';
-import { bucketStart, fromInput, nextBucket, presetRange, toInput } from '../src/time';
+import { bucketStart, fromInput, nextBucket, normalizeIntervalHours, presetRange, toInput } from '../src/time';
 const start = Date.parse('2026-10-08T10:00:00Z');
 const close = (actual: number | null, expected: number) => assert(actual !== null && Math.abs(actual - expected) < 1e-9, `${actual} should be approximately ${expected}`);
 const feed = (minutes: number, value: string | null, power: string | null = '500'): Feed => ({ created_at: new Date(start + minutes * 60000).toISOString(), entry_id: minutes + 100, field1: value, field2: '33', field3: power });
@@ -9,7 +9,7 @@ const feed = (minutes: number, value: string | null, power: string | null = '500
 test('counter differences, boundary interpolation, hourly allocation and costs agree', () => {
   const result = analyze([feed(-30, '100'), feed(30, '102'), feed(90, '104')], { start, end: start + 3600000 }, 'hour', defaultSettings);
   close(result.importEnergy, 2);
-  close(result.costs, 0.64);
+  close(result.costs, 0.54);
   assert.equal(result.coverage, 1);
   assert.equal(result.exportEnergy, 0);
   close(result.buckets[0].importEnergy, 2);
@@ -51,6 +51,47 @@ test('Berlin days respect the 23-hour and 25-hour DST transitions', () => {
 test('yesterday is a local calendar day rather than an arbitrary 24-hour interval', () => {
   const range = presetRange('yesterday', Date.parse('2026-03-30T10:00:00Z'));
   assert.equal((range.end - range.start) / 3600000, 23);
+});
+test('custom hours round up to a divisor of the 24-hour day', () => {
+  assert.equal(normalizeIntervalHours(5), 6);
+  assert.equal(normalizeIntervalHours(7), 8);
+  assert.equal(normalizeIntervalHours(9), 12);
+  assert.equal(normalizeIntervalHours(24), 24);
+  for (const invalid of [0, -1, 25, NaN, Infinity]) assert.throws(() => normalizeIntervalHours(invalid), /zwischen 1 und 24/);
+});
+test('custom six-hour sections start at local midnight and conserve consumption', () => {
+  const day = fromInput('2026-10-08T00:00');
+  const feeds: Feed[] = Array.from({ length: 25 }, (_, i) => ({ created_at: new Date(day + i * 3600000).toISOString(), entry_id: i, field1: String(100 + i), field2: '33', field3: String(200 + i * 10) }));
+  const result = analyze(feeds, { start: day, end: day + 24 * 3600000 }, 'custom', defaultSettings, 5);
+  assert.equal(result.buckets.length, 4);
+  assert.deepEqual(result.buckets.map(b => toInput(new Date(b.timestamp)).slice(11)), ['00:00', '06:00', '12:00', '18:00']);
+  result.buckets.forEach(b => close(b.importEnergy, 6));
+  close(result.importEnergy, 24);
+  close(result.costs, 6.48);
+  close(result.buckets[0].power, 225);
+  const partial = analyze(feeds, { start: day + 3600000, end: day + 23 * 3600000 }, 'custom', defaultSettings, 6);
+  close(partial.importEnergy, 22);
+  close(partial.buckets[0].importEnergy, 5);
+  close(partial.buckets[3].importEnergy, 5);
+});
+test('custom two- and six-hour sections span DST days without losing or duplicating energy', () => {
+  for (const [date, realHours] of [['2026-03-29', 23], ['2026-10-25', 25]] as const) {
+    const day = fromInput(`${date}T00:00`);
+    const end = nextBucket(day, 'day');
+    const feeds: Feed[] = Array.from({ length: realHours + 1 }, (_, i) => ({ created_at: new Date(day + i * 3600000).toISOString(), entry_id: i, field1: String(100 + i), field2: '33', field3: '500' }));
+    for (const hours of [2, 6]) {
+      const result = analyze(feeds, { start: day, end }, 'custom', defaultSettings, hours);
+      assert.equal(result.buckets.length, 24 / hours);
+      close(result.importEnergy, realHours);
+      assert.equal(result.coverage, 1);
+      result.buckets.forEach(b => assert(nextBucket(b.timestamp, 'custom', hours) > b.timestamp));
+    }
+  }
+  const firstRepeatedHour = Date.parse('2026-10-25T00:30:00Z');
+  const secondRepeatedHour = Date.parse('2026-10-25T01:30:00Z');
+  assert.equal(bucketStart(firstRepeatedHour, 'custom', 2), bucketStart(secondRepeatedHour, 'custom', 2));
+  assert(bucketStart(firstRepeatedHour, 'custom', 2) <= firstRepeatedHour);
+  assert.equal(toInput(new Date(bucketStart(fromInput('2026-03-29T03:30'), 'custom', 2))), '2026-03-29T03:00');
 });
 test('saturated ThingSpeak responses split and are deduplicated rather than truncated', async () => {
   const originalFetch = globalThis.fetch;

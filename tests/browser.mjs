@@ -7,6 +7,9 @@ const exec = promisify(execFile);
 const baseUrl = process.env.STROM_TEST_URL || 'http://127.0.0.1:5173';
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1120 }, timezoneId: 'Europe/Berlin', locale: 'de-DE' });
+await context.addInitScript(() => {
+  if (!localStorage.getItem('strom-o-settings')) localStorage.setItem('strom-ott-settings', JSON.stringify({ channelId: '2184811', tariff: 0.32 }));
+});
 const page = await context.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
@@ -47,11 +50,30 @@ try {
   assert.equal(await page.locator('.error-notice').count(), 0);
   assert(!/—/.test(await page.locator('.stat-number').first().innerText()));
   assert(await page.locator('.recharts-bar').count() > 0);
-  console.log('PASS: public-channel loading and consumption diagram');
+  assert.equal(await page.locator('.brand-light').innerText(), 'O');
+  assert((await page.title()).includes('Strom O'));
+  assert((await page.locator('.stat-card').nth(3).innerText()).includes('Bei 0,27 €/kWh'));
+  console.log('PASS: public-channel loading, new brand and migrated 27-cent price');
 
-  await page.getByRole('button', { name: 'Heute', exact: true }).click();
+  await page.getByRole('button', { name: 'Gestern', exact: true }).click();
   await settled();
   await page.getByRole('button', { name: 'Verbrauchsanalyse', exact: true }).click();
+  await page.getByLabel('Auflösung').selectOption('custom');
+  await page.getByLabel('Stunden pro Intervall').fill('5');
+  await page.getByRole('button', { name: 'Übernehmen', exact: true }).click();
+  assert.equal(await page.getByLabel('Stunden pro Intervall').inputValue(), '6');
+  assert((await page.locator('.interval-description').innerText()).includes('5 → 6 Stunden'));
+  assert.equal(await page.locator('.interval-panel tbody tr').count(), 4);
+  assert((await page.locator('.interval-panel tbody tr').first().innerText()).includes('3,60 kWh'));
+  await page.getByLabel('Stunden pro Intervall').fill('0');
+  await page.getByRole('button', { name: 'Übernehmen', exact: true }).click();
+  assert((await page.getByRole('alert').innerText()).includes('zwischen 1 und 24'));
+  await page.getByLabel('Stunden pro Intervall').fill('3');
+  await page.getByLabel('Stunden pro Intervall').press('Enter');
+  assert.equal(await page.locator('.interval-panel tbody tr').count(), 8);
+  assert.equal(await page.getByRole('alert').count(), 0);
+  await page.getByLabel('Auflösung').selectOption('hour');
+  console.log('PASS: custom hour rounding, grouped consumption and interval validation');
   await page.getByLabel('Einspeisung', { exact: true }).check();
   await page.getByLabel('Diagrammtyp').selectOption('line');
   assert(await page.locator('.recharts-line').count() >= 2);
@@ -71,6 +93,7 @@ try {
   const csvDownload = await csvEvent;
   const csv = await readFile(await csvDownload.path(), 'utf8');
   assert(csv.includes('Erfasster Netzbezug (kWh)'));
+  assert(csvDownload.suggestedFilename().startsWith('strom-O-'));
   assert(csv.split('\r\n').length > 1);
   console.log('PASS: chart controls, consumption filters, validation and CSV');
 
@@ -97,14 +120,19 @@ try {
   assert((await page.getByRole('alert').innerText()).includes('„Von“ muss vor „Bis“ liegen.'));
   console.log('PASS: persisted settings and invalid date-range validation');
 
-  await mkdir('/tmp/strom-ott-tests', { recursive: true });
+  await page.getByRole('button', { name: 'Gestern', exact: true }).click();
+  await settled();
+  await page.getByLabel('Auflösung').selectOption('custom');
+  await page.getByLabel('Stunden pro Intervall').fill('5');
+  await page.getByRole('button', { name: 'Übernehmen', exact: true }).click();
+  await mkdir('/tmp/strom-o-tests', { recursive: true });
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.waitForTimeout(400);
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) console.log(await page.evaluate(() => [...document.querySelectorAll('main *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).slice(0, 12).map(e => ({tag:e.tagName, class:e.className, right:e.getBoundingClientRect().right}))));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `horizontal overflow at ${width}px`);
     await page.waitForTimeout(350);
-    await page.screenshot({ path: `/tmp/strom-ott-tests/${width}.png`, fullPage: true });
+    await page.screenshot({ path: `/tmp/strom-o-tests/${width}.png`, fullPage: true });
   }
   await page.getByLabel('Navigation öffnen').click();
   await page.getByRole('button', { name: 'Messwerte', exact: true }).click();

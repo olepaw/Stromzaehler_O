@@ -1,4 +1,4 @@
-# stromott – Energie im Blick
+# stromO – Energie im Blick
 
 Deutschsprachige, responsive Website für den öffentlichen ThingSpeak-Stromzählerkanal **2184811**. React, TypeScript und Vite; vollständig als statische Website betreibbar.
 
@@ -26,7 +26,7 @@ npm run test:browser     # Bedienung mit kontrollierten Testdaten; laufenden Ser
 
 - **Zeitraum-Suche:** Heute, Gestern, 7 Tage, 30 Tage oder frei wählbares Datum mit Uhrzeit. Alle Eingaben und Anzeigen folgen `Europe/Berlin`.
 - **Verbrauchsfilter:** Mindest- und Höchstverbrauch je Stunde, Tag oder Monat. Treffer erscheinen im Verbrauchsdiagramm und in einer Intervalltabelle; der Verbrauchs-CSV-Export berücksichtigt die Filter. Die Übersichtszahlen gelten für den gesamten Zeitraum. Der Verlauf der Originalzählerstände bleibt ungefiltert.
-- **Variable Diagramme:** Verbrauch, mittlere Leistung und kumulierte Zählerstände; Balken, Fläche oder Linie; stündliche, tägliche oder monatliche Auflösung, auswählbare Datenreihen und Zoom-Bereich.
+- **Variable Diagramme:** Verbrauch, mittlere Leistung und kumulierte Zählerstände; Balken, Fläche oder Linie; stündliche, tägliche, monatliche oder individuelle Auflösung, auswählbare Datenreihen und Zoom-Bereich. Bei „Individuell“ eine Stundenzahl eingeben und „Übernehmen“ wählen: erlaubt sind 1, 2, 3, 4, 6, 8, 12 und 24 Stunden. Andere Eingaben werden auf den nächsten passenden Teiler von 24 aufgerundet; 5 wird zu 6, also vier Abschnitte pro Tag.
 - **Messwerte:** Originalwerte durchsuchen, nach Zeitpunkt sortieren, seitenweise ansehen und Treffer als CSV exportieren.
 - **Kennzahlen:** Erfasster Netzbezug und Einspeisung, gemessene Leistungsspitze, geschätzte Kosten ohne Grundpreis.
 - **Einstellungen:** Öffentliche Kanal-ID, Feldzuordnung, kWh/Wh, W/kW und Strompreis. Einstellungen bleiben lokal im Browser.
@@ -35,7 +35,9 @@ npm run test:browser     # Bedienung mit kontrollierten Testdaten; laufenden Ser
 
 ## Daten und Berechnung
 
-Die Voreinstellung interpretiert `field1` (Eingang) und `field2` (Ausgang) als kumulierte Zählerstände in **kWh**; `field3` (Leistung) als **Watt**. Die API bestätigt die Feldnamen, aber liefert keine verlässliche Einheitendefinition. Einheiten bitte in den Einstellungen mit dem verwendeten Zähler abgleichen. Der voreingestellte Strompreis von **0,32 €/kWh** ist ein editierbarer Beispielpreis.
+Die Voreinstellung interpretiert `field1` (Eingang) und `field2` (Ausgang) als kumulierte Zählerstände in **kWh**; `field3` (Leistung) als **Watt**. Die API bestätigt die Feldnamen, aber liefert keine verlässliche Einheitendefinition. Einheiten bitte in den Einstellungen mit dem verwendeten Zähler abgleichen. Der voreingestellte Strompreis beträgt **0,27 €/kWh** und bleibt editierbar. Bereits gespeicherte Browser-Einstellungen werden beim Umstieg auf den neuen Namen übernommen; der bisherige Preis wird dabei einmal auf 0,27 €/kWh gesetzt.
+
+Individuelle Abschnitte beginnen täglich um 00:00 Uhr in Berlin. Sechs Stunden ergeben 00–06, 06–12, 12–18 und 18–24 Uhr. An Tagen mit Zeitumstellung kann die tatsächliche Dauer eines Abschnitts abweichen; nicht existierende Uhrzeiten werden zur nächsten gültigen Uhrzeit verschoben. Bei einer Stunde bleiben die tatsächlich vorhandenen 23 bzw. 25 Stunden getrennt.
 
 Verbrauch ist die positive Differenz aufeinanderfolgender gültiger Zählerwerte. Zur Zuordnung auf Intervallgrenzen wird zwischen benachbarten Messungen linear interpoliert. Der vorhergehende Wert und bei historischen Zeiträumen der erste folgende Wert werden zusätzlich abgefragt. Das ist eine Schätzung innerhalb eines Messintervalls, keine Messung exakt an der Grenze.
 
@@ -58,10 +60,10 @@ Im Repository unter **Settings → Pages → Build and deployment → Source** d
 Der Workflow berücksichtigt den Unterpfad des Repositorys. Für eine lokale Prüfung desselben Builds:
 
 ```sh
-VITE_BASE_PATH=/Stromzaehler_Ott/ npm run build
-VITE_BASE_PATH=/Stromzaehler_Ott/ npm run preview
+VITE_BASE_PATH=/Stromzaehler_O/ npm run build
+VITE_BASE_PATH=/Stromzaehler_O/ npm run preview
 ```
 
-Die Standardadresse nach erfolgreicher Veröffentlichung lautet `https://olepaw.github.io/Stromzaehler_Ott/`. Diese Adresse funktioniert erst, wenn Pages aktiviert ist und der Workflow erfolgreich abgeschlossen wurde. Bei einem privaten Repository hängt die Verfügbarkeit von GitHub Pages vom GitHub-Tarif ab; eine Änderung der Repository-Sichtbarkeit ist für diese Anleitung nicht erforderlich und wird nicht automatisch vorgenommen.
+Die Standardadresse nach erfolgreicher Veröffentlichung lautet `https://olepaw.github.io/Stromzaehler_O/`. Diese Adresse funktioniert erst, wenn Pages aktiviert ist und der Workflow erfolgreich abgeschlossen wurde. Bei einem privaten Repository hängt die Verfügbarkeit von GitHub Pages vom GitHub-Tarif ab; eine Änderung der Repository-Sichtbarkeit ist für diese Anleitung nicht erforderlich und wird nicht automatisch vorgenommen.
 
 Cloud-Netzwerkfreigabe für Entwicklung/Live-Tests: `api.thingspeak.com` zusätzlich zu den Paketregistrierungen. Die Website schreibt nicht in ThingSpeak und enthält keinen Read- oder Write-API-Schlüssel. Zugangsdaten gehören nicht ins Repository.
