@@ -1,4 +1,5 @@
 import { bucketStart, nextBucket, type Range, type Granularity } from './time';
+import { feedCache, type FeedCache } from './cache';
 export type Feed = { created_at: string; entry_id: number; [key: string]: string | number | null };
 export type Channel = { id: number; name: string; [key: string]: unknown };
 export type Settings = { channelId: string; importField: string; exportField: string; powerField: string; counterUnit: 'kWh' | 'Wh'; powerUnit: 'W' | 'kW'; tariff: number };
@@ -86,11 +87,17 @@ export function analyze(feeds: Feed[], range: Range, granularity: Granularity, s
   };
 }
 
-export async function loadFeeds(channelId: string, range: Range, signal: AbortSignal, progress: (requests: number) => void): Promise<{ channel: Channel; feeds: Feed[] }> {
+type LoadOptions = { forceRefresh?: boolean; cache?: FeedCache | false; clock?: () => number };
+export async function loadFeeds(channelId: string, range: Range, signal: AbortSignal, progress: (requests: number) => void, options: LoadOptions = {}): Promise<{ channel: Channel; feeds: Feed[]; cacheHits: number }> {
   if (!/^\d+$/.test(channelId)) throw new Error('Die Kanal-ID muss eine Zahl sein.');
+  const clock = options.clock ?? Date.now;
+  const now = clock();
+  const cache = options.cache === false ? null : options.cache ?? feedCache;
+  let cacheHits = 0;
   let requests = 0;
   let channel: Channel = { id: Number(channelId), name: 'Stromzähler' };
   async function request(start: number | null, end: number, results = 8000): Promise<Feed[]> {
+    signal.throwIfAborted();
     if (++requests > 240) throw new Error('Dieser Zeitraum benötigt zu viele Abfragen. Bitte den Zeitraum verkleinern.');
     progress(requests);
     const url = new URL(`https://api.thingspeak.com/channels/${channelId}/feeds.json`);
@@ -98,7 +105,7 @@ export async function loadFeeds(channelId: string, range: Range, signal: AbortSi
     url.searchParams.set('timezone', 'UTC');
     url.searchParams.set('end', new Date(end).toISOString().slice(0, 19).replace('T', ' '));
     if (start !== null) url.searchParams.set('start', new Date(start).toISOString().slice(0, 19).replace('T', ' '));
-    const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]) });
+    const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]) });
     if (!response.ok) throw new Error(`ThingSpeak ist nicht erreichbar (HTTP ${response.status}). Prüfe, ob der Kanal öffentlich und der Zugriff erlaubt ist.`);
     const data = await response.json();
     if (!data || !Array.isArray(data.feeds) || !data.channel) throw new Error('Der Kanal liefert keine lesbaren Daten. Bitte öffentliche Freigabe und Kanal-ID prüfen.');
@@ -112,20 +119,69 @@ export async function loadFeeds(channelId: string, range: Range, signal: AbortSi
     const mid = Math.floor((start + end) / 2000) * 1000;
     return [...await window(start, mid, depth + 1), ...await window(mid, end, depth + 1)];
   }
-  const result: Feed[] = [];
-  // Keep requests bounded and split saturated responses instead of silently truncating at 8,000.
-  const week = 7 * 86400000;
-  for (let start = range.start; start < range.end; start += week) result.push(...await window(start, Math.min(start + week, range.end)));
-  // A value before the selection enables interpolation at its exact start boundary.
-  const previous = await request(null, range.start, 1);
-  result.push(...previous);
-  // Historical ranges also need the first following value to interpolate the end boundary.
-  if (range.end < Date.now() - 60000) {
-    const following = await window(range.end, Math.min(Date.now(), range.end + 2 * 3600000));
-    const first = normalizeFeeds(following).find(f => Date.parse(f.created_at) >= range.end);
-    if (first) result.push(first);
+  async function cachedWindow(start: number | null, end: number, results = 8000): Promise<Feed[]> {
+    signal.throwIfAborted();
+    const key = `${channelId}:${start ?? 'previous'}:${end}:${results}`;
+    if (cache && !options.forceRefresh) {
+      const stored = await cache.get(key, clock());
+      signal.throwIfAborted();
+      if (stored) { cacheHits++; channel = stored.channel; return stored.feeds; }
+    }
+    const fetchedUntil = Math.min(end, Math.floor(now / 1000) * 1000);
+    const feeds = normalizeFeeds(start === null ? await request(null, fetchedUntil, results) : await window(start, fetchedUntil));
+    signal.throwIfAborted();
+    // Only complete, successfully split windows are saved; failed/aborted requests never poison the cache.
+    if (cache) await cache.put({ key, end, fetchedUntil, savedAt: clock(), channel, feeds });
+    signal.throwIfAborted();
+    return feeds;
   }
-  return { channel, feeds: normalizeFeeds(result) };
+  const result: Feed[] = [];
+  // Stable UTC windows overlap across searches and survive a moving live endpoint.
+  // Long, sparse searches use larger windows to stay within the existing request limit.
+  const day = 86400000;
+  const chunk = Math.max(1, Math.ceil((range.end - range.start) / (120 * day))) * day;
+  const missing: { start: number; end: number }[] = [];
+  for (let start = Math.floor(range.start / chunk) * chunk; start < range.end; start += chunk) {
+    signal.throwIfAborted();
+    const end = start + chunk;
+    const stored = cache && !options.forceRefresh ? await cache.get(`${channelId}:${start}:${end}:8000`, clock()) : null;
+    signal.throwIfAborted();
+    if (stored) {
+      cacheHits++; channel = stored.channel;
+      for (const feed of stored.feeds) result.push(feed);
+    } else missing.push({ start, end });
+  }
+  // Read existing windows before writing new ones, so a search larger than the
+  // cache does not evict every reusable window before reaching it.
+  for (const { start, end } of missing) {
+    const feeds = await cachedWindow(start, end);
+    for (const feed of feeds) result.push(feed);
+  }
+  let sorted = normalizeFeeds(result);
+  // A value before the selection enables interpolation at its exact start boundary.
+  if (!sorted.some(f => Date.parse(f.created_at) <= range.start)) {
+    result.push(...await cachedWindow(null, range.start, 1));
+  }
+  // Historical ranges also need the first following value to interpolate the end boundary.
+  if (range.end < now - 60000 && !sorted.some(f => Date.parse(f.created_at) >= range.end)) {
+    const following = await cachedWindow(range.end, range.end + 2 * 3600000);
+    for (const feed of following) result.push(feed);
+  }
+  sorted = normalizeFeeds(result);
+  // Keep a small boundary margin for independently missing counter fields.
+  // A single nearest feed could have a null value where an earlier valid one exists.
+  const margin = 2 * 3600000;
+  let previous: Feed | undefined, following: Feed | undefined;
+  const selected: Feed[] = [];
+  for (const feed of sorted) {
+    const timestamp = Date.parse(feed.created_at);
+    if (timestamp < range.start) previous = feed;
+    if (timestamp >= range.end && !following) following = feed;
+    if (timestamp >= range.start - margin && timestamp <= range.end + margin) selected.push(feed);
+  }
+  if (previous && !selected.includes(previous)) selected.unshift(previous);
+  if (following && !selected.includes(following)) selected.push(following);
+  return { channel, feeds: selected, cacheHits };
 }
 
 export function demoFeeds(range: Range): Feed[] {

@@ -85,9 +85,28 @@ export function nextBucket(timestamp: number, granularity: Granularity, interval
   else date.setUTCMonth(date.getUTCMonth() + 1, 1);
   return fromInput(`${date.toISOString().slice(0, 10)}T00:00`);
 }
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+const numberFormatters = new Map<number, Intl.NumberFormat>();
 export function formatDate(timestamp: number, options: Intl.DateTimeFormatOptions = {}): string {
-  return new Intl.DateTimeFormat('de-DE', { timeZone: TIME_ZONE, day: '2-digit', month: '2-digit', ...options }).format(timestamp);
+  const resolved = { timeZone: TIME_ZONE, day: '2-digit', month: '2-digit', ...options };
+  // JSON omits undefined; filter first so an explicitly removed day/month remains distinct.
+  const fields = Object.entries(resolved).filter(([, value]) => value !== undefined).sort(([a], [b]) => a.localeCompare(b));
+  const key = JSON.stringify(fields);
+  let formatter = dateFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('de-DE', Object.fromEntries(fields));
+    if (dateFormatters.size >= 32) dateFormatters.clear();
+    dateFormatters.set(key, formatter);
+  }
+  return formatter.format(timestamp);
 }
 export function formatNumber(value: number | null | undefined, digits = 2): string {
-  return value == null || !Number.isFinite(value) ? '—' : new Intl.NumberFormat('de-DE', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+  if (value == null || !Number.isFinite(value)) return '—';
+  let formatter = numberFormatters.get(digits);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat('de-DE', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    if (numberFormatters.size >= 24) numberFormatters.clear();
+    numberFormatters.set(digits, formatter);
+  }
+  return formatter.format(value);
 }

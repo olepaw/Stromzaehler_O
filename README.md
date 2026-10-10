@@ -14,7 +14,7 @@ npm run dev
 Vite zeigt die Adresse des Entwicklungsservers an. In der Cloud gegebenenfalls die Port-Vorschau für Port 5173 verwenden. Die Website lädt den öffentlichen ThingSpeak-Kanal automatisch. Ein API-Schlüssel ist nicht nötig.
 
 ```sh
-npm test                 # Berechnungen, Zeitzonen, Datenlücken, Abfrageaufteilung
+npm test                 # Berechnungen, Zeitzonen, Datenlücken, Abfrageaufteilung und Cache
 npm run build            # TypeScript-Prüfung und Produktionsbuild
 npm run preview          # Produktionsbuild lokal prüfen
 npm run test:browser     # Bedienung mit kontrollierten Testdaten; laufenden Server benötigt
@@ -31,6 +31,7 @@ npm run test:browser     # Bedienung mit kontrollierten Testdaten; laufenden Ser
 - **Kennzahlen:** Erfasster Netzbezug und Einspeisung, gemessene Leistungsspitze, geschätzte Kosten ohne Grundpreis.
 - **Einstellungen:** Öffentliche Kanal-ID, Feldzuordnung, kWh/Wh, W/kW und Strompreis. Einstellungen bleiben lokal im Browser.
 - **Aktualisierung:** Relative Zeiträume können minütlich neu geladen werden. Individuelle und abgeschlossene Zeiträume bleiben fest.
+- **Datencache:** Asynchrone Speicherung in IndexedDB, auch nach dem Neuladen der Seite. Überschneidende Suchen verwenden dieselben Zeitfenster. Aktuelle, unvollständige und innerhalb der letzten 24 Stunden abgeschlossene Fenster gelten eine Minute, ältere abgeschlossene Fenster 24 Stunden. Der Aktualisieren-Knopf umgeht den Cache. Unter Einstellungen lässt sich der Datencache leeren.
 - **Demo:** Bei einer fehlenden Verbindung lassen sich ausdrücklich gekennzeichnete Beispieldaten zum Ausprobieren aktivieren. Es gibt keinen stillen Wechsel von Live- zu Beispieldaten.
 
 ## Daten und Berechnung
@@ -44,6 +45,8 @@ Verbrauch ist die positive Differenz aufeinanderfolgender gültiger Zählerwerte
 Messlücken über zwei Stunden und sinkende Zählerstände werden nicht als Verbrauch gerechnet. Fehlende Werte bleiben fehlend. Die Oberfläche kennzeichnet unvollständige Abdeckung; Verbrauch und Kosten umfassen dann nur den erfassten Anteil. Leistungswerte werden pro Intervall als arithmetischer Mittelwert berechnet. Der gewählte Zeitraum ist halboffen: **Von einschließlich, Bis ausschließlich**. Verbrauchsberechnungen dürfen den Randwert bei „Bis“ zur Interpolation nutzen.
 
 Abfragen laufen direkt gegen `https://api.thingspeak.com/channels/{id}/feeds.json`. CORS wird von ThingSpeak unterstützt. Zeiträume werden in Fenster geteilt und bei Erreichen des API-Limits von 8.000 Einträgen rekursiv verkleinert. Überlappende Antworten werden dedupliziert. Damit die Anwendung bedienbar bleibt, gelten ein Jahr pro Suche, maximal 240 API-Abfragen und ein Timeout pro Anfrage. Abfragen können abgebrochen werden. Bei sehr großen Datenmengen empfiehlt sich ein kleinerer Zeitraum. Nur die Darstellung von Originalzählerständen wird auf etwa 1.500 Punkte ausgedünnt; Messwerte und CSV bleiben vollständig.
+
+Der Cache speichert vollständige UTC-Zeitfenster pro Kanal getrennt (bei kurzen Suchen tageweise), unabhängig von Diagrammtyp, Auflösung und Strompreis. Die Begrenzung beträgt **16 MiB geschätzte Nutzdaten und höchstens 64 Einträge**; tatsächlicher Speicherbedarf inklusive Browser-Verwaltung kann abweichen. Ein einzelnes Fenster über 4 MiB wird nicht gespeichert. Abgelaufene und am längsten nicht verwendete Einträge werden beim Schreiben entfernt. Die Bereinigung liest nur kleine Metadaten, keine vollständige Kopie aller Messwerte. Der Cache hält keine zusätzliche dauerhafte Kopie im JavaScript-Arbeitsspeicher. Im Arbeitsspeicher bleiben der ausgewählte Zeitraum und ein kleiner Randbereich zur Verbrauchsberechnung. Datum-/Zahlformatierer werden wiederverwendet; die Messwertsuche läuft nur in der Messwertansicht. Bei gesperrtem oder vollem Browserspeicher werden Daten weiterhin direkt geladen. Fehlerhafte oder unvollständig abgebrochene Zeitfenster werden nicht gecacht; abgelaufene Daten ersetzen keine fehlgeschlagene Live-Abfrage.
 
 ## Bereitstellen
 

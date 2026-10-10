@@ -103,16 +103,16 @@ test('saturated ThingSpeak responses split and are deduplicated rather than trun
     const queryEnd = url.searchParams.get('end');
     let feeds: Feed[];
     if (url.searchParams.get('results') === '1') feeds = [feed(-1, '99')];
-    else if (queryStart === '2026-10-08 10:00:00' && queryEnd === '2026-10-08 11:00:00') feeds = Array.from({ length: 8000 }, () => feed(0, '100'));
-    else if (queryStart === '2026-10-08 10:00:00') feeds = [feed(0, '100'), feed(30, '101')];
-    else if (queryStart === '2026-10-08 10:30:00') feeds = [feed(30, '101'), feed(60, '102')];
+    else if (queryStart === '2026-10-08 00:00:00' && queryEnd === '2026-10-09 00:00:00') feeds = Array.from({ length: 8000 }, () => feed(0, '100'));
+    else if (queryStart === '2026-10-08 00:00:00') feeds = [feed(-1, '99'), feed(0, '100'), feed(30, '101')];
+    else if (queryStart === '2026-10-08 12:00:00') feeds = [feed(30, '101'), feed(60, '102')];
     else feeds = [feed(60, '102')];
     return new Response(JSON.stringify({ channel: { id: 2184811, name: 'Test' }, feeds }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
   try {
     const result = await loadFeeds('2184811', { start, end: start + 3600000 }, controller.signal, () => {});
     assert.equal(result.feeds.length, 4);
-    assert(urls.some(u => u.searchParams.get('start') === '2026-10-08 10:30:00'));
+    assert(urls.some(u => u.searchParams.get('start') === '2026-10-08 12:00:00'));
     close(analyze(result.feeds, { start, end: start + 3600000 }, 'hour', defaultSettings).importEnergy, 2);
   } finally { globalThis.fetch = originalFetch; }
 });

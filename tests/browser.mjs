@@ -15,6 +15,7 @@ const errors = [];
 page.on('pageerror', e => errors.push(e.message));
 let behavior = 'fixture';
 let liveRequests = 0;
+let fixtureRequests = 0;
 const step = 15 * 60000;
 const fixtureFeed = timestamp => ({
   created_at: new Date(timestamp).toISOString(), entry_id: Math.floor(timestamp / step),
@@ -33,6 +34,7 @@ await page.route('https://api.thingspeak.com/**', async route => {
     } catch { return route.abort('failed').catch(() => {}); }
   }
   const url = new URL(route.request().url());
+  fixtureRequests++;
   const end = Date.parse(url.searchParams.get('end').replace(' ', 'T') + 'Z');
   const start = url.searchParams.get('start') ? Date.parse(url.searchParams.get('start').replace(' ', 'T') + 'Z') : end - step;
   const feeds = [];
@@ -57,6 +59,28 @@ try {
 
   await page.getByRole('button', { name: 'Gestern', exact: true }).click();
   await settled();
+  const firstConsumption = await page.locator('.stat-number').first().innerText();
+  const requestsBeforeCache = fixtureRequests;
+  await page.getByRole('button', { name: 'Gestern', exact: true }).click();
+  await settled();
+  assert.equal(fixtureRequests, requestsBeforeCache);
+  assert((await page.locator('.cache-caption').innerText()).includes('Aus Cache'));
+  assert.equal(await page.locator('.stat-number').first().innerText(), firstConsumption);
+  await page.reload(); await settled();
+  await page.getByRole('button', { name: 'Gestern', exact: true }).click(); await settled();
+  assert.equal(fixtureRequests, requestsBeforeCache);
+  await page.getByLabel('Daten aktualisieren').click(); await settled();
+  assert(fixtureRequests > requestsBeforeCache);
+  assert.equal(await page.locator('.cache-caption').count(), 0);
+  assert.equal(await page.locator('.stat-number').first().innerText(), firstConsumption);
+  await page.getByRole('button', { name: 'Einstellungen', exact: true }).click();
+  await page.getByRole('button', { name: 'Datencache leeren', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Datencache geleert' }).waitFor();
+  await page.getByRole('button', { name: 'Übersicht', exact: true }).click();
+  const requestsBeforeClear = fixtureRequests;
+  await page.getByRole('button', { name: 'Gestern', exact: true }).click(); await settled();
+  assert(fixtureRequests > requestsBeforeClear);
+  console.log('PASS: persistent cache, repeated ranges, direct refresh and clearing');
   await page.getByRole('button', { name: 'Verbrauchsanalyse', exact: true }).click();
   await page.getByLabel('Auflösung').selectOption('custom');
   await page.getByLabel('Stunden pro Intervall').fill('5');
@@ -141,7 +165,7 @@ try {
   console.log('PASS: desktop/tablet/mobile layouts and mobile navigation');
 
   behavior = 'fail';
-  await page.reload(); await settled();
+  await page.getByLabel('Daten aktualisieren').click(); await settled();
   assert.equal(await page.getByRole('alert').count(), 1);
   await page.getByRole('button', { name: 'Demo ansehen' }).click(); await settled();
   assert.equal(await page.locator('.demo-notice').count(), 1);
@@ -151,6 +175,10 @@ try {
   if (process.env.STROM_LIVE_TEST === '1') {
     behavior = 'live';
     await page.setViewportSize({ width: 1440, height: 1120 });
+    await page.getByRole('button', { name: 'Einstellungen', exact: true }).click();
+    await page.getByRole('button', { name: 'Datencache leeren', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: 'Datencache geleert' }).waitFor();
+    await page.getByRole('button', { name: 'Übersicht', exact: true }).click();
     await page.getByRole('button', { name: 'Live-Daten laden' }).click();
     await settled();
     assert.equal(await page.locator('.error-notice').count(), 0);
